@@ -3,7 +3,10 @@
 スマホ向けのブラウザゲーム。完成したら X（旧Twitter）に投稿して遊んでもらう。
 
 ## 作業フォルダ
-- C:\Dev\KazeGame（Git は開始済み。ブランチ名は main。GitHub にはまだ送っていない）
+- C:\Dev\KazeGame（Git は開始済み。ブランチ名は main）
+- 公開済み（2026-11-02）: https://sakamoto241.github.io/kaze-game/
+  - リポジトリ: https://github.com/sakamoto241/kaze-game（公開）。gh でログイン済み
+  - 更新するときは、変更を commit して main に push すると、数分で公開ページに反映される
 - BGM: assets\audio\bgm_wind.ogg
   - テーマは「風の情景」。ピアノと弦楽器、少し切ない夕暮れの雰囲気。BPM 76
   - 88.5秒、OGG、約1.2MB。最後と最初を1.5秒重ねて、つなぎ目なく繰り返せる作り
