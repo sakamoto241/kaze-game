@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>風にのせて</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f4b183; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- BGM(最初のタップで鳴らす) ----------
+// OGG が使える端末は OGG(つなぎ目がきれい)、使えない端末(古い iPhone など)は MP3
+const bgm = new Audio();
+const canOgg = bgm.canPlayType('audio/ogg; codecs="vorbis"') !== '';
+bgm.src = canOgg ? 'assets/audio/bgm_wind.ogg' : 'assets/audio/bgm_wind.mp3';
+bgm.loop = true;
+bgm.volume = 0.7;
+let started = false;
+let message = 'タップではじめる';
+
+bgm.addEventListener('error', () => {
+  started = false;
+  message = '曲を読み込めませんでした(エラー番号 ' + (bgm.error ? bgm.error.code : '?') + ')';
+});
+bgm.addEventListener('playing', () => { message = ''; });
+
+function startMusic() {
+  if (started) return;
+  started = true;
+  message = '曲を読み込み中…';
+  bgm.play().catch(() => {
+    started = false;
+    message = '曲を鳴らせませんでした。もう一度タップしてください';
+  });
+}
+
+// ---------- 操作(長押し = 風) ----------
+let holding = false;
+window.addEventListener('pointerdown', () => {
+  startMusic();
+  if (over && performance.now() - overAt > 700) resetGame();
+  holding = true;
+});
+window.addEventListener('pointerup', () => { holding = false; });
+window.addEventListener('pointercancel', () => { holding = false; });
+window.addEventListener('blur', () => { holding = false; });
+
+// ---------- 調整しやすい数字 ----------
+const GRAVITY = 260;        // 下に引っぱる力
+const MAX_FALL = 90;        // 落ちる速さの上限(ふわふわ感)
+const LIFT = 620;           // 風が持ち上げる力
+const MAX_RISE = 260;       // 上がる速さの上限
+const WIND_ACCEL = 220;     // 風で前に進む加速
+const WIND_MAX_SPEED = 220; // 前に進む速さの上限
+const DRAG = 0.6;           // 風をやめたときの減速
+
+// ---------- 綿毛 ----------
+const seed = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
+const trail = [];
+let scroll = 0; // 背景が流れた量
+const groundY = () => H * 0.88;
+
+function resetSeed() {
+  seed.x = W * 0.3;
+  seed.y = groundY() - 30;
+  seed.vx = 0;
+  seed.vy = 0;
+  trail.length = 0;
+}
+resetSeed();
+
+// ---------- 障害物(鳥)と、ゲームの状態 ----------
+const BIRD_SPEED = 170;      // 鳥が自分から近づいてくる速さ(最初)
+const SPAWN_MIN = 0.6;       // 鳥が出る間隔(秒)の最短(最初)
+const SPAWN_MAX = 1.2;       // 鳥が出る間隔(秒)の最長(最初)
+const START_LEVEL = 1;       // 最初からのむずかしさの段階
+const RAMP_M = 50;           // この距離(m)ごとに、むずかしさが1段階あがる
+const RAMP_MAX = 5;          // むずかしさの段階の上限
+const NIGHT_M = 200;         // この距離(m)で完全に夜になる
+const AIM_CHANCE = 0.55;     // 綿毛の高さをねらう鳥の割合
+const PAIR_CHANCE = 0.45;   // 鳥が2羽ならんで出る確率(最大)
+const SEED_R = 14;           // 綿毛の当たり判定の半径
+const BIRD_R = 13;           // 鳥の当たり判定の半径
+const PX_PER_M = 40;         // 何ピクセルを1メートルとして数えるか
+const birds = [];
+let spawnTimer = 2;
+let over = false;
+let overAt = 0;
+let finalDistance = 0;
+
+const distanceM = () => Math.floor(scroll / PX_PER_M);
+
+function resetGame() {
+  resetSeed();
+  scroll = 0;
+  birds.length = 0;
+  spawnTimer = 2;
+  over = false;
+  holding = false;
+}
+
+// 遠くへ行くほど 0 → RAMP_MAX に近づく(なめらかに)
+const level = () => Math.min(RAMP_MAX, START_LEVEL + scroll / PX_PER_M / RAMP_M);
+
+function spawnBird() {
+  const top = 40, bottom = groundY() - 14; // 空の上から地面すれすれまで
+  // 半分ほどは、いま綿毛がいる高さをねらって飛んでくる(同じ場所にいつづけられない)
+  const aimed = Math.random() < AIM_CHANCE;
+  const y0 = aimed ? seed.y + (Math.random() - 0.5) * 80 : top + Math.random() * (bottom - top);
+  const ys = [Math.min(bottom, Math.max(top, y0))];
+  // 遠くへ行くと、高さのちがう鳥が2羽ならんで出る
+  if (Math.random() < PAIR_CHANCE * level() / RAMP_MAX) {
+    ys.push(Math.min(bottom, Math.max(top, ys[0] + (Math.random() < 0.5 ? -1 : 1) * 130)));
+  }
+  for (const y of ys) birds.push({ x: W + 40, y, ph: Math.random() * 6.28 });
+}
+
+// ---------- 風のすじ ----------
+const streaks = [];
+for (let i = 0; i < 18; i++) {
+  streaks.push({ x: Math.random(), y: Math.random(), len: 40 + Math.random() * 80, sp: 0.6 + Math.random() * 0.8 });
+}
+
+// ---------- 草(流れる景色) ----------
+const grass = [];
+for (let i = 0; i < 40; i++) {
+  grass.push({ x: Math.random() * 2000, h: 12 + Math.random() * 22, ph: Math.random() * 6.28 });
+}
+
+function update(dt) {
+  if (holding) {
+    seed.vy -= LIFT * dt;
+    seed.vx += WIND_ACCEL * dt;
+  } else {
+    seed.vy += GRAVITY * dt;
+    seed.vx -= seed.vx * DRAG * dt;
+  }
+  if (seed.vy > MAX_FALL) seed.vy = MAX_FALL;
+  if (seed.vy < -MAX_RISE) seed.vy = -MAX_RISE;
+  if (seed.vx > WIND_MAX_SPEED) seed.vx = WIND_MAX_SPEED;
+
+  seed.y += seed.vy * dt;
+
+  // 地面と空の上限
+  const gy = groundY() - 14;
+  if (seed.y > gy) {
+    seed.y = gy;
+    seed.vy = 0;
+    seed.vx *= 0.9; // 地面ではすぐ止まる
+  }
+  if (seed.y < 40) { seed.y = 40; if (seed.vy < 0) seed.vy = 0; }
+
+  scroll += seed.vx * dt;
+  seed.angle += (seed.vx * 0.0006 + 0.4 * (seed.vy / MAX_FALL) * 0.02);
+
+  trail.push({ x: seed.x, y: seed.y, life: 1 });
+  for (const p of trail) { p.life -= dt * 1.4; p.x -= seed.vx * dt; }
+  while (trail.length && trail[0].life <= 0) trail.shift();
+
+  // 鳥: 風で進むほど速く近づく
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawnBird();
+    spawnTimer = (SPAWN_MIN + Math.random() * (SPAWN_MAX - SPAWN_MIN)) / (1 + level() * 0.35);
+  }
+  const birdSpeed = BIRD_SPEED * (1 + level() * 0.3);
+  for (const b of birds) {
+    b.x -= (seed.vx + birdSpeed) * dt;
+    const dx = b.x - seed.x, dy = b.y - seed.y;
+    if (dx * dx + dy * dy < (SEED_R + BIRD_R) * (SEED_R + BIRD_R)) {
+      over = true;
+      overAt = performance.now();
+      finalDistance = distanceM();
+      holding = false;
+    }
+  }
+  while (birds.length && birds[0].x < -60) birds.shift();
+}
+
+function drawBirds(time) {
+  // 夜になるほど、鳥も闇にとけて見えにくくなる
+  ctx.strokeStyle = mix('#3a2f4a', '#161230', nightAmount());
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  for (const b of birds) {
+    const flap = Math.sin(time * 10 + b.ph) * 8;
+    ctx.beginPath();
+    ctx.moveTo(b.x - 16, b.y - flap);
+    ctx.quadraticCurveTo(b.x - 6, b.y + 2, b.x, b.y);
+    ctx.quadraticCurveTo(b.x + 6, b.y + 2, b.x + 16, b.y - flap);
+    ctx.stroke();
+  }
+  ctx.lineCap = 'butt';
+}
+
+// 色(#rrggbb)を、0〜1 の割合 t でまぜる
+function mix(a, b, t) {
+  const pa = [1, 3, 5].map(i => parseInt(a.substr(i, 2), 16));
+  const pb = [1, 3, 5].map(i => parseInt(b.substr(i, 2), 16));
+  return 'rgb(' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t)).join(',') + ')';
+}
+
+// 星(夜になると見えてくる)
+const stars = [];
+for (let i = 0; i < 70; i++) {
+  stars.push({ x: Math.random(), y: Math.random() * 0.6, r: 0.8 + Math.random() * 1.4, ph: Math.random() * 6.28 });
+}
+
+// 夕方 0 → 夜 1(むずかしさの段階と同じ速さで進む)
+const nightAmount = () => Math.min(1, scroll / PX_PER_M / NIGHT_M);
+
+function drawBackground(time) {
+  const n = nightAmount();
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, mix('#5b6fa8', '#070b22', n));
+  g.addColorStop(0.55, mix('#f4b183', '#2a3366', n));
+  g.addColorStop(1, mix('#6b8e4e', '#1f3326', n));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // 星
+  if (n > 0.25) {
+    const a = (n - 0.25) / 0.75;
+    ctx.fillStyle = '#fff';
+    for (const s of stars) {
+      ctx.globalAlpha = a * (0.5 + 0.5 * Math.sin(time * 2 + s.ph));
+      ctx.beginPath();
+      ctx.arc(s.x * W, s.y * H, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // 月
+    ctx.fillStyle = 'rgba(235, 240, 255,' + (a * 0.9) + ')';
+    ctx.beginPath();
+    ctx.arc(W * 0.22, H * 0.17, 24, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 夕日(夜に向かって沈んで消える)
+  ctx.fillStyle = 'rgba(255, 230, 190,' + (0.85 * (1 - n)) + ')';
+  ctx.beginPath();
+  ctx.arc(W * 0.75, H * (0.58 + n * 0.2), 46, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 遠い丘(ゆっくり流れる)
+  ctx.fillStyle = mix('#8a7a8f', '#1b1a33', n);
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 10) {
+    const y = H * 0.7 + Math.sin((x + scroll * 0.08) * 0.008) * 22 + Math.sin((x + scroll * 0.08) * 0.021) * 8;
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(W, H);
+  ctx.fill();
+
+  // 近い丘
+  ctx.fillStyle = mix('#6b8e4e', '#1f3326', n);
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 10) {
+    const y = groundY() + Math.sin((x + scroll * 0.3) * 0.012) * 8;
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(W, H);
+  ctx.fill();
+
+  // 草(風でなびく)
+  ctx.strokeStyle = mix('#4d6e3a', '#142219', n);
+  ctx.lineWidth = 2;
+  const lean = Math.min(1, seed.vx / WIND_MAX_SPEED) * 10;
+  for (const gr of grass) {
+    let x = ((gr.x - scroll * 0.9) % 2000 + 2000) % 2000;
+    if (x > W + 20) continue;
+    const sway = Math.sin(time * 1.5 + gr.ph) * 3 + lean;
+    ctx.beginPath();
+    ctx.moveTo(x, groundY() + 20);
+    ctx.quadraticCurveTo(x, groundY() + 20 - gr.h * 0.6, x + sway, groundY() + 20 - gr.h);
+    ctx.stroke();
+  }
+}
+
+function drawStreaks(dt) {
+  if (!holding) return;
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 2;
+  for (const s of streaks) {
+    s.x += s.sp * dt * 1.6;
+    if (s.x > 1.2) { s.x = -0.2; s.y = Math.random(); }
+    const x = s.x * W, y = s.y * H * 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - s.len, y + 4);
+    ctx.stroke();
+  }
+}
+
+function drawSeed() {
+  // 軌跡
+  for (const p of trail) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (p.life * 0.25) + ')';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const x = seed.x, y = seed.y;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.sin(seed.angle) * 0.3);
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(a) * 22, Math.sin(a) * 22);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * 22, Math.sin(a) * 22, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  const time = now / 1000;
+  seed.x = W * 0.3; // 画面の大きさが変わっても、綿毛は左から3割の位置
+  if (started && !message && !over) {
+    update(dt);
+  } else if (!over) {
+    // 曲が鳴り始めるまでは、綿毛をその場でゆらす
+    seed.y = groundY() - 30 + Math.sin(time * 2) * 4;
+  }
+  drawBackground(time);
+  drawStreaks(dt);
+  drawBirds(time);
+  drawSeed();
+
+  if (started && !message) {
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText((over ? finalDistance : distanceM()) + ' m', 16, 34);
+  }
+
+  if (over) {
+    ctx.fillStyle = 'rgba(40, 30, 60, 0.55)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.font = '22px sans-serif';
+    ctx.fillText('とんだ距離', W / 2, H * 0.38);
+    ctx.font = 'bold 56px sans-serif';
+    ctx.fillText(finalDistance + ' m', W / 2, H * 0.38 + 66);
+    if (performance.now() - overAt > 700) {
+      ctx.font = '18px sans-serif';
+      ctx.fillText('タップでもう一度', W / 2, H * 0.38 + 120);
+    }
+  } else if (message) {
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = '20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(message, W / 2, H * 0.4);
+  } else if (!holding && seed.vx < 1 && seed.y > groundY() - 40) {
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = '18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('長押しで風をおこす', W / 2, H * 0.4);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
