@@ -3,14 +3,15 @@
 スマホ向けのブラウザゲーム。完成したら X（旧Twitter）に投稿して遊んでもらう。
 
 ## 作業フォルダ
-- C:\Dev\KazeGame（Git はまだ始めていない）
+- C:\Dev\KazeGame（Git は開始済み。ブランチ名は main。GitHub にはまだ送っていない）
 - BGM: assets\audio\bgm_wind.ogg
   - テーマは「風の情景」。ピアノと弦楽器、少し切ない夕暮れの雰囲気。BPM 76
   - 88.5秒、OGG、約1.2MB。最後と最初を1.5秒重ねて、つなぎ目なく繰り返せる作り
   - つなぎ目はまだ耳で確かめていない
   - 元の WAV: assets\audio\source\wind_B_piano_strings.wav（.json に作ったときの設定）
   - 選ばなかった候補も同じフォルダにある: wind_A_flute_orchestra（フルート）、wind_C_folk_whistle（笛とギター）
-  - source の WAV は大きい（各約23MB）。Git を始めるときは記録に入れるか確認する
+  - source の WAV は大きい（各約23MB）。ユーザー判断で Git の記録には入れない（.gitignore で除外。パソコンには残す）
+  - スマホ用に MP3 版も追加済み（assets\audio\bgm_wind.mp3）。OGG が使えない端末では MP3 を鳴らす
 - 効果音などが必要なら audio-studio コネクタを使ってよい
   - 注意: 以前 process_audio が途中で止まってファイルが壊れた。OGG への変換は ffmpeg で行う（インストール済み）
 
